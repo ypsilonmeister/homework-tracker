@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="theme-color" content="#f6f6f2" />
-  <title>宿題時間トラッカー v0.2</title>
+  <title>宿題時間トラッカー v0.3</title>
   <style>
     :root {
       --bg: #f6f6f2;
@@ -79,6 +79,7 @@
       pointer-events: none; object-fit: cover;
     }
     .camera-preview-wrap {
+      position: relative;
       width: min(420px, 100%);
       aspect-ratio: 4 / 3;
       margin: 22px auto 16px;
@@ -99,6 +100,13 @@
       opacity: 1 !important;
       object-fit: cover !important;
       transform: scaleX(-1);
+      pointer-events: none;
+    }
+    .camera-preview-wrap canvas {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
       pointer-events: none;
     }
     .calibration-status {
@@ -140,6 +148,7 @@
           <p id="prepareText" class="subtitle">カメラとセンサーを準備しています。</p>
           <div id="cameraPreviewWrap" class="camera-preview-wrap hidden">
             <video id="cameraFeed" autoplay muted playsinline></video>
+            <canvas id="debugOverlay" aria-hidden="true"></canvas>
           </div>
           <div id="calibrationStatus" class="calibration-status"></div>
           <div id="diagnostic" class="diagnostic"></div>
@@ -213,7 +222,7 @@
   <script type="module">
     import { FaceDetector, FilesetResolver } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.0.1/vision_bundle.mjs";
 
-    const APP_VERSION = 2;
+    const APP_VERSION = 3;
     const STORAGE_KEY = "homework-tracker.sessions.v1";
     const ACTIVE_KEY = "homework-tracker.active-session.v1";
     const SAMPLE_INTERVAL_MS = 400;
@@ -232,6 +241,7 @@
 
     const el = {
       video: document.getElementById("cameraFeed"),
+      overlay: document.getElementById("debugOverlay"),
       start: document.getElementById("startButton"),
       history: document.getElementById("historyButton"),
       prepareTitle: document.getElementById("prepareTitle"),
@@ -273,6 +283,10 @@
     let lastDetectorTimestamp = 0;
     let lastVideoTime = -1;
     let lastDetectionError = "";
+    let lastDetectionCount = 0;
+    let lastDetectionScore = null;
+    let lastDetectionBox = null;
+    let detectorDelegate = "GPU";
 
     function showScreen(name) {
       for (const [key, node] of Object.entries(screens)) node.classList.toggle("hidden", key !== name);
@@ -291,12 +305,27 @@
     async function ensureDetector() {
       if (faceDetector) return faceDetector;
       const vision = await FilesetResolver.forVisionTasks(WASM_URL);
-      faceDetector = await FaceDetector.createFromOptions(vision, {
-        baseOptions: { modelAssetPath: MODEL_URL, delegate: "CPU" },
-        runningMode: "VIDEO",
-        minDetectionConfidence: 0.35,
-        minSuppressionThreshold: 0.3,
-      });
+
+      // MediaPipe公式Webデモと同じくGPUを第一選択。
+      // GPU初期化そのものが失敗した場合だけCPUへフォールバックする。
+      try {
+        detectorDelegate = "GPU";
+        faceDetector = await FaceDetector.createFromOptions(vision, {
+          baseOptions: { modelAssetPath: MODEL_URL, delegate: "GPU" },
+          runningMode: "VIDEO",
+          minDetectionConfidence: 0.20,
+          minSuppressionThreshold: 0.3,
+        });
+      } catch (gpuError) {
+        console.warn("GPU FaceDetector init failed; falling back to CPU.", gpuError);
+        detectorDelegate = "CPU";
+        faceDetector = await FaceDetector.createFromOptions(vision, {
+          baseOptions: { modelAssetPath: MODEL_URL, delegate: "CPU" },
+          runningMode: "VIDEO",
+          minDetectionConfidence: 0.20,
+          minSuppressionThreshold: 0.3,
+        });
+      }
       return faceDetector;
     }
 
@@ -315,6 +344,10 @@
       el.video.srcObject = mediaStream;
       lastVideoTime = -1;
       lastDetectorTimestamp = 0;
+      lastDetectionCount = 0;
+      lastDetectionScore = null;
+      lastDetectionBox = null;
+      lastDetectionError = "";
       await el.video.play();
       if (el.video.readyState < 2) {
         await new Promise(resolve => el.video.addEventListener("loadeddata", resolve, { once: true }));
@@ -329,21 +362,75 @@
       el.video.srcObject = null;
     }
 
+    function drawDebugOverlay() {
+      const canvas = el.overlay;
+      if (!canvas || !el.video.videoWidth || !el.video.videoHeight) return;
+
+      if (canvas.width !== el.video.videoWidth || canvas.height !== el.video.videoHeight) {
+        canvas.width = el.video.videoWidth;
+        canvas.height = el.video.videoHeight;
+      }
+
+      const ctx = canvas.getContext("2d");
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      if (!lastDetectionBox) return;
+
+      // videoはCSSで左右反転しているため、矩形も左右反転する。
+      const b = lastDetectionBox;
+      const x = canvas.width - b.originX - b.width;
+      const y = b.originY;
+
+      ctx.lineWidth = Math.max(3, canvas.width / 180);
+      ctx.strokeStyle = "#21c47b";
+      ctx.strokeRect(x, y, b.width, b.height);
+
+      const label = lastDetectionScore == null
+        ? "face"
+        : `face ${Math.round(lastDetectionScore * 100)}%`;
+      ctx.font = `700 ${Math.max(18, canvas.width / 26)}px sans-serif`;
+      const pad = 8;
+      const textW = ctx.measureText(label).width;
+      const textH = Math.max(24, canvas.width / 22);
+      const labelY = Math.max(textH, y);
+      ctx.fillStyle = "rgba(0,0,0,.72)";
+      ctx.fillRect(x, labelY - textH, textW + pad * 2, textH);
+      ctx.fillStyle = "#fff";
+      ctx.fillText(label, x + pad, labelY - 5);
+    }
+
     function detectFaceNow() {
       if (!faceDetector || !mediaStream || el.video.readyState < 2) return null;
 
-      // Safariでは同じvideo frameに対して連続推論しない。
+      // Safari/Chromeとも同じvideo frameに対して連続推論しない。
       if (el.video.currentTime === lastVideoTime) return null;
       lastVideoTime = el.video.currentTime;
 
       try {
         const timestamp = Math.max(performance.now(), lastDetectorTimestamp + 0.001);
         lastDetectorTimestamp = timestamp;
+
         const result = faceDetector.detectForVideo(el.video, timestamp);
+        const detections = result?.detections ?? [];
+        lastDetectionCount = detections.length;
+
+        if (detections.length > 0) {
+          lastDetectionScore = detections[0]?.categories?.[0]?.score ?? null;
+          lastDetectionBox = detections[0]?.boundingBox ?? null;
+        } else {
+          lastDetectionScore = null;
+          lastDetectionBox = null;
+        }
+
         lastDetectionError = "";
-        return Boolean(result?.detections?.length);
+        drawDebugOverlay();
+        return detections.length > 0;
       } catch (error) {
         lastDetectionError = error?.message || String(error);
+        lastDetectionCount = 0;
+        lastDetectionScore = null;
+        lastDetectionBox = null;
+        drawDebugOverlay();
         console.error("Face detection error", error);
         return null;
       }
@@ -366,8 +453,10 @@
         el.cameraPreviewWrap.classList.toggle("found", stable);
         el.calibrationStatus.textContent = stable ? "顔を見つけました ✓" : "顔をさがしています…";
         el.diagnostic.textContent =
-          `video ${el.video.videoWidth || 0}×${el.video.videoHeight || 0} / ` +
-          `t=${el.video.currentTime.toFixed(2)}s / samples=${recent.length}` +
+          `delegate=${detectorDelegate} / video ${el.video.videoWidth || 0}×${el.video.videoHeight || 0} / ` +
+          `t=${el.video.currentTime.toFixed(2)}s / detections=${lastDetectionCount}` +
+          (lastDetectionScore == null ? "" : ` / score=${lastDetectionScore.toFixed(3)}`) +
+          ` / samples=${recent.length}` +
           (lastDetectionError ? ` / error: ${lastDetectionError}` : "");
 
         if (stable) return true;
@@ -395,6 +484,7 @@
           grace_ms: GRACE_MS,
           sample_interval_ms: SAMPLE_INTERVAL_MS,
           model: "blaze_face_short_range_float16",
+          delegate: detectorDelegate,
         },
       };
     }
@@ -542,6 +632,8 @@
       el.cameraPreviewWrap.classList.remove("found");
       el.calibrationStatus.textContent = "";
       el.diagnostic.textContent = "";
+      const overlayCtx = el.overlay?.getContext("2d");
+      if (overlayCtx) overlayCtx.clearRect(0, 0, el.overlay.width, el.overlay.height);
 
       if (!secureContextOkay()) {
         setPrepareMessage("カメラは HTTPS または localhost で開く必要があります。\n例: このHTMLがあるフォルダで `python3 -m http.server 8000` を実行し、http://localhost:8000/ を開いてください。", "error");
@@ -566,7 +658,7 @@
             "・顔を正面〜やや下向きで画面中央へ\n" +
             "・端末との距離を30〜100cm程度に\n" +
             "・逆光を避ける\n\n" +
-            "下に video 0×0 と出ている場合はカメラ映像側の問題です。error が出ていればその内容を教えてください。",
+            "下に video 0×0 と出ている場合はカメラ映像側の問題です。detections=0 が続く場合は検出モデル側、error が出ていればその内容が手がかりです。",
             "warn"
           );
           return;
