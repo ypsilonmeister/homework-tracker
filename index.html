@@ -1,0 +1,755 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#f6f6f2" />
+  <title>宿題時間トラッカー v0.1</title>
+  <style>
+    :root {
+      --bg: #f6f6f2;
+      --panel: #ffffff;
+      --text: #1d1d1f;
+      --muted: #747474;
+      --line: #deded7;
+      --accent: #1f6f50;
+      --danger: #9f2f2f;
+      --warn: #9a6b00;
+      --shadow: 0 10px 30px rgba(0,0,0,.07);
+      font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Yu Gothic", "Noto Sans JP", sans-serif;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; min-height: 100%; background: var(--bg); color: var(--text); }
+    body { min-height: 100dvh; }
+    button { font: inherit; }
+    .app { min-height: 100dvh; display: grid; place-items: center; padding: max(20px, env(safe-area-inset-top)) 20px max(20px, env(safe-area-inset-bottom)); }
+    .screen { width: min(680px, 100%); }
+    .hidden { display: none !important; }
+    .card { background: var(--panel); border: 1px solid var(--line); border-radius: 28px; box-shadow: var(--shadow); padding: clamp(24px, 5vw, 44px); }
+    .center { text-align: center; }
+    .title { margin: 0 0 10px; font-size: clamp(24px, 5vw, 34px); letter-spacing: .02em; }
+    .subtitle { margin: 0; color: var(--muted); font-size: 15px; line-height: 1.7; }
+    .big-button {
+      width: min(420px, 100%); min-height: 112px; border: 0; border-radius: 28px;
+      background: var(--text); color: white; font-size: clamp(30px, 7vw, 46px); font-weight: 800;
+      box-shadow: 0 8px 18px rgba(0,0,0,.14); touch-action: manipulation;
+    }
+    .big-button:active { transform: translateY(1px); }
+    .big-button:disabled { opacity: .45; }
+    .start-wrap { min-height: 62dvh; display: grid; place-items: center; gap: 24px; }
+    .tiny-link { border: 0; background: transparent; color: var(--muted); text-decoration: underline; text-underline-offset: 4px; padding: 12px; }
+    .status-dot { width: 16px; height: 16px; border-radius: 999px; background: var(--accent); box-shadow: 0 0 0 8px rgba(31,111,80,.10); margin: 0 auto; }
+    .tracking-layout { min-height: 66dvh; display: grid; grid-template-rows: 1fr auto; align-items: center; gap: 46px; }
+    .tracking-note { margin-top: 22px; color: var(--muted); font-size: 14px; }
+    .hold-button {
+      --hold: 0%; position: relative; overflow: hidden; width: min(420px, 100%); min-height: 94px;
+      border: 2px solid var(--text); border-radius: 26px; background: white; color: var(--text);
+      font-size: clamp(28px, 6vw, 38px); font-weight: 800; touch-action: none; user-select: none; -webkit-user-select: none;
+    }
+    .hold-button::before { content: ""; position: absolute; inset: 0 auto 0 0; width: var(--hold); background: rgba(0,0,0,.08); pointer-events: none; }
+    .hold-button > span { position: relative; z-index: 1; }
+    .prepare { min-height: 52dvh; display: grid; place-items: center; text-align: center; }
+    .spinner { width: 36px; height: 36px; border: 4px solid var(--line); border-top-color: var(--text); border-radius: 50%; animation: spin 1s linear infinite; margin: 0 auto 22px; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .message { margin-top: 18px; padding: 14px 16px; border-radius: 16px; background: #f2f2ed; color: var(--muted); line-height: 1.6; text-align: left; white-space: pre-line; }
+    .error { color: var(--danger); background: #fff0f0; }
+    .warn { color: var(--warn); background: #fff7de; }
+    .result-total { font-size: clamp(44px, 11vw, 76px); font-weight: 850; margin: 26px 0 4px; font-variant-numeric: tabular-nums; }
+    .result-label { color: var(--muted); }
+    .secondary-button { min-height: 58px; border: 1px solid var(--line); border-radius: 18px; background: white; color: var(--text); padding: 0 22px; font-weight: 700; }
+    .actions { display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; margin-top: 28px; }
+    .history-header { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-bottom: 20px; }
+    .history-header h2 { margin: 0; font-size: 26px; }
+    .table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 18px; }
+    table { width: 100%; border-collapse: collapse; min-width: 590px; font-variant-numeric: tabular-nums; }
+    th, td { padding: 13px 12px; border-bottom: 1px solid var(--line); text-align: right; font-size: 14px; }
+    th:first-child, td:first-child { text-align: left; }
+    tr:last-child td { border-bottom: 0; }
+    th { color: var(--muted); font-weight: 650; background: #fafaf7; }
+    .history-empty { color: var(--muted); text-align: center; padding: 38px 8px; }
+    .small { font-size: 13px; color: var(--muted); line-height: 1.6; }
+    .parent-stats { margin-top: 26px; border-top: 1px solid var(--line); padding-top: 18px; display: grid; gap: 10px; }
+    .stat-row { display: grid; grid-template-columns: 1fr auto; gap: 20px; align-items: baseline; }
+    .stat-row span:first-child { color: var(--muted); }
+    .stat-row strong { font-variant-numeric: tabular-nums; }
+    .danger-button { color: var(--danger); }
+    .privacy { margin-top: 16px; font-size: 12px; color: var(--muted); line-height: 1.55; }
+    #cameraFeed {
+      position: fixed; left: -10px; top: -10px; width: 2px; height: 2px; opacity: .001;
+      pointer-events: none; object-fit: cover;
+    }
+    @media (max-width: 520px) {
+      .card { border-radius: 22px; padding: 24px 18px; }
+      .history-header { align-items: flex-start; }
+    }
+  </style>
+</head>
+<body>
+  <video id="cameraFeed" autoplay muted playsinline></video>
+
+  <main class="app">
+    <section id="idleScreen" class="screen">
+      <div class="card center start-wrap">
+        <div>
+          <h1 class="title">宿題時間トラッカー</h1>
+          <p class="subtitle">時間のようすを、静かに記録します。</p>
+        </div>
+        <button id="startButton" class="big-button" type="button">はじめる</button>
+        <button id="historyButton" class="tiny-link" type="button">きろくを見る</button>
+      </div>
+    </section>
+
+    <section id="prepareScreen" class="screen hidden">
+      <div class="card prepare">
+        <div>
+          <div class="spinner" aria-hidden="true"></div>
+          <h2 id="prepareTitle" class="title">じゅんびちゅう</h2>
+          <p id="prepareText" class="subtitle">カメラとセンサーを準備しています。</p>
+          <div id="prepareMessage" class="message hidden"></div>
+          <div class="actions">
+            <button id="cancelPrepareButton" class="secondary-button" type="button">もどる</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="trackingScreen" class="screen hidden">
+      <div class="card center tracking-layout">
+        <div>
+          <div id="sensorDot" class="status-dot" aria-label="センサー動作中"></div>
+          <p class="tracking-note">きろく中</p>
+        </div>
+        <div>
+          <button id="finishButton" class="hold-button" type="button"><span>おしまい</span></button>
+          <p class="small">1びょう ながおし</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="resultScreen" class="screen hidden">
+      <div class="card center">
+        <h2 class="title">きょうの きろく</h2>
+        <div id="resultDate" class="subtitle"></div>
+        <div id="resultTotal" class="result-total">0分</div>
+        <div class="result-label">はじめてから おわるまで</div>
+
+        <div id="parentStats" class="parent-stats">
+          <div class="stat-row"><span>カメラ検知</span><strong id="resultDetected">—</strong></div>
+          <div class="stat-row"><span>非検知</span><strong id="resultUndetected">—</strong></div>
+          <div id="unknownRow" class="stat-row hidden"><span>計測不明</span><strong id="resultUnknown">—</strong></div>
+          <div class="stat-row"><span>検知率</span><strong id="resultRatio">—</strong></div>
+        </div>
+        <p class="privacy">映像・写真は保存しません。端末内には時間データだけを保存します。</p>
+        <div class="actions">
+          <button id="closeResultButton" class="secondary-button" type="button">とじる</button>
+          <button id="resultHistoryButton" class="secondary-button" type="button">きろくを見る</button>
+        </div>
+      </div>
+    </section>
+
+    <section id="historyScreen" class="screen hidden">
+      <div class="card">
+        <div class="history-header">
+          <h2>きろく</h2>
+          <button id="backFromHistoryButton" class="secondary-button" type="button">もどる</button>
+        </div>
+        <div id="historyEmpty" class="history-empty hidden">まだ記録がありません。</div>
+        <div id="historyTableWrap" class="table-wrap hidden">
+          <table>
+            <thead>
+              <tr><th>日時</th><th>全体</th><th>検知</th><th>非検知</th><th>不明</th><th>検知率</th></tr>
+            </thead>
+            <tbody id="historyBody"></tbody>
+          </table>
+        </div>
+        <div class="actions">
+          <button id="exportCsvButton" class="secondary-button" type="button">CSV</button>
+          <button id="exportJsonButton" class="secondary-button" type="button">JSON</button>
+          <button id="deleteAllButton" class="secondary-button danger-button" type="button">すべて消す</button>
+        </div>
+        <p class="small">「検知」は顔検出センサーが顔を捉えていた時間で、着席時間そのものではありません。最初の数回は実際の離席との一致を確認してください。</p>
+      </div>
+    </section>
+  </main>
+
+  <script type="module">
+    import { FaceDetector, FilesetResolver } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.22-rc.20250304/vision_bundle.mjs";
+
+    const APP_VERSION = 1;
+    const STORAGE_KEY = "homework-tracker.sessions.v1";
+    const ACTIVE_KEY = "homework-tracker.active-session.v1";
+    const SAMPLE_INTERVAL_MS = 400;
+    const GRACE_MS = 10_000;
+    const HOLD_TO_FINISH_MS = 1_000;
+    const MODEL_URL = "https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/latest/blaze_face_short_range.tflite";
+    const WASM_URL = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.22-rc.20250304/wasm";
+
+    const screens = {
+      idle: document.getElementById("idleScreen"),
+      prepare: document.getElementById("prepareScreen"),
+      tracking: document.getElementById("trackingScreen"),
+      result: document.getElementById("resultScreen"),
+      history: document.getElementById("historyScreen"),
+    };
+
+    const el = {
+      video: document.getElementById("cameraFeed"),
+      start: document.getElementById("startButton"),
+      history: document.getElementById("historyButton"),
+      prepareTitle: document.getElementById("prepareTitle"),
+      prepareText: document.getElementById("prepareText"),
+      prepareMessage: document.getElementById("prepareMessage"),
+      cancelPrepare: document.getElementById("cancelPrepareButton"),
+      finish: document.getElementById("finishButton"),
+      sensorDot: document.getElementById("sensorDot"),
+      resultDate: document.getElementById("resultDate"),
+      resultTotal: document.getElementById("resultTotal"),
+      resultDetected: document.getElementById("resultDetected"),
+      resultUndetected: document.getElementById("resultUndetected"),
+      resultUnknown: document.getElementById("resultUnknown"),
+      resultRatio: document.getElementById("resultRatio"),
+      unknownRow: document.getElementById("unknownRow"),
+      closeResult: document.getElementById("closeResultButton"),
+      resultHistory: document.getElementById("resultHistoryButton"),
+      backHistory: document.getElementById("backFromHistoryButton"),
+      historyEmpty: document.getElementById("historyEmpty"),
+      historyTableWrap: document.getElementById("historyTableWrap"),
+      historyBody: document.getElementById("historyBody"),
+      exportCsv: document.getElementById("exportCsvButton"),
+      exportJson: document.getElementById("exportJsonButton"),
+      deleteAll: document.getElementById("deleteAllButton"),
+    };
+
+    let faceDetector = null;
+    let mediaStream = null;
+    let preparationCancelled = false;
+    let detectionTimer = null;
+    let checkpointTimer = null;
+    let session = null;
+    let holdTimer = null;
+    let holdAnimation = null;
+    let holdStartedAt = 0;
+
+    function showScreen(name) {
+      for (const [key, node] of Object.entries(screens)) node.classList.toggle("hidden", key !== name);
+    }
+
+    function setPrepareMessage(text = "", type = "") {
+      el.prepareMessage.textContent = text;
+      el.prepareMessage.className = "message" + (type ? ` ${type}` : "");
+      el.prepareMessage.classList.toggle("hidden", !text);
+    }
+
+    function secureContextOkay() {
+      return window.isSecureContext || location.hostname === "localhost" || location.hostname === "127.0.0.1";
+    }
+
+    async function ensureDetector() {
+      if (faceDetector) return faceDetector;
+      const vision = await FilesetResolver.forVisionTasks(WASM_URL);
+      faceDetector = await FaceDetector.createFromOptions(vision, {
+        baseOptions: { modelAssetPath: MODEL_URL },
+        runningMode: "VIDEO",
+        minDetectionConfidence: 0.5,
+        minSuppressionThreshold: 0.3,
+      });
+      return faceDetector;
+    }
+
+    async function startCamera() {
+      stopCamera();
+      mediaStream = await navigator.mediaDevices.getUserMedia({
+        audio: false,
+        video: {
+          facingMode: "user",
+          width: { ideal: 640 },
+          height: { ideal: 480 },
+          frameRate: { ideal: 15, max: 24 },
+        },
+      });
+      el.video.srcObject = mediaStream;
+      await el.video.play();
+      if (el.video.readyState < 2) {
+        await new Promise(resolve => el.video.addEventListener("loadeddata", resolve, { once: true }));
+      }
+    }
+
+    function stopCamera() {
+      if (mediaStream) {
+        mediaStream.getTracks().forEach(track => track.stop());
+        mediaStream = null;
+      }
+      el.video.srcObject = null;
+    }
+
+    function detectFaceNow() {
+      if (!faceDetector || !mediaStream || el.video.readyState < 2) return null;
+      try {
+        const result = faceDetector.detectForVideo(el.video, performance.now());
+        return Boolean(result?.detections?.length);
+      } catch (error) {
+        console.error("Face detection error", error);
+        return null;
+      }
+    }
+
+    async function waitForInitialFace(timeoutMs = 20_000) {
+      const started = performance.now();
+      while (!preparationCancelled && performance.now() - started < timeoutMs) {
+        const found = detectFaceNow();
+        if (found === true) return true;
+        await new Promise(r => setTimeout(r, SAMPLE_INTERVAL_MS));
+      }
+      return false;
+    }
+
+    function createSession() {
+      const now = new Date();
+      const perf = performance.now();
+      return {
+        id: `${formatCompactDate(now)}-${randomId(4)}`,
+        version: APP_VERSION,
+        startedAtIso: now.toISOString(),
+        startedPerf: perf,
+        endedAtIso: null,
+        endedPerf: null,
+        currentState: "detected",
+        currentSegmentStart: perf,
+        lostSince: null,
+        segments: [],
+        sensor: {
+          type: "face_detector",
+          grace_ms: GRACE_MS,
+          sample_interval_ms: SAMPLE_INTERVAL_MS,
+          model: "blaze_face_short_range_float16",
+        },
+      };
+    }
+
+    function transitionState(nextState, atPerf) {
+      if (!session || nextState === session.currentState) return;
+      const start = session.currentSegmentStart;
+      if (atPerf > start) {
+        session.segments.push({ state: session.currentState, start_perf: start, end_perf: atPerf });
+      }
+      session.currentState = nextState;
+      session.currentSegmentStart = atPerf;
+    }
+
+    function processDetection(found, nowPerf) {
+      if (!session) return;
+
+      if (found === null) {
+        if (session.currentState !== "unknown") transitionState("unknown", nowPerf);
+        session.lostSince = null;
+        return;
+      }
+
+      if (session.currentState === "unknown") {
+        transitionState(found ? "detected" : "undetected", nowPerf);
+        session.lostSince = found ? null : nowPerf;
+        return;
+      }
+
+      if (found) {
+        if (session.currentState === "undetected") transitionState("detected", nowPerf);
+        session.lostSince = null;
+        return;
+      }
+
+      if (session.currentState === "undetected") return;
+
+      if (session.lostSince === null) {
+        session.lostSince = nowPerf;
+        return;
+      }
+
+      if (nowPerf - session.lostSince >= GRACE_MS) {
+        // 10秒を超えた場合は、最初にロストした時点まで遡って非検知にする。
+        transitionState("undetected", session.lostSince);
+        session.lostSince = null;
+      }
+    }
+
+    function scheduleDetectionLoop() {
+      clearTimeout(detectionTimer);
+      const run = () => {
+        if (!session) return;
+        const now = performance.now();
+        if (document.hidden) {
+          processDetection(null, now);
+        } else {
+          processDetection(detectFaceNow(), now);
+        }
+        detectionTimer = setTimeout(run, SAMPLE_INTERVAL_MS);
+      };
+      detectionTimer = setTimeout(run, SAMPLE_INTERVAL_MS);
+    }
+
+    function checkpointActiveSession() {
+      if (!session) return;
+      const now = performance.now();
+      const previewSegments = finalizedSegmentsPreview(now);
+      const totals = calculateTotals(previewSegments);
+      const checkpoint = {
+        version: APP_VERSION,
+        id: session.id,
+        started_at: session.startedAtIso,
+        last_checkpoint_at: new Date().toISOString(),
+        total_duration_ms: Math.max(0, now - session.startedPerf),
+        ...totals,
+      };
+      localStorage.setItem(ACTIVE_KEY, JSON.stringify(checkpoint));
+    }
+
+    function finalizedSegmentsPreview(nowPerf) {
+      if (!session) return [];
+      const segments = session.segments.map(s => ({ ...s }));
+      let state = session.currentState;
+      let start = session.currentSegmentStart;
+
+      if (state === "detected" && session.lostSince !== null && nowPerf - session.lostSince >= GRACE_MS) {
+        if (session.lostSince > start) segments.push({ state: "detected", start_perf: start, end_perf: session.lostSince });
+        state = "undetected";
+        start = session.lostSince;
+      }
+      if (nowPerf > start) segments.push({ state, start_perf: start, end_perf: nowPerf });
+      return segments;
+    }
+
+    function calculateTotals(segments) {
+      let detected = 0, undetected = 0, unknown = 0;
+      for (const s of segments) {
+        const d = Math.max(0, s.end_perf - s.start_perf);
+        if (s.state === "detected") detected += d;
+        else if (s.state === "undetected") undetected += d;
+        else unknown += d;
+      }
+      const observable = detected + undetected;
+      return {
+        detected_duration_ms: Math.round(detected),
+        undetected_duration_ms: Math.round(undetected),
+        unknown_duration_ms: Math.round(unknown),
+        detected_ratio: observable > 0 ? detected / observable : null,
+      };
+    }
+
+    function serializeSegments(segments, basePerf) {
+      return segments.map(s => ({
+        state: s.state,
+        start_ms: Math.max(0, Math.round(s.start_perf - basePerf)),
+        end_ms: Math.max(0, Math.round(s.end_perf - basePerf)),
+      }));
+    }
+
+    function saveFinishedSession(record) {
+      const all = loadSessions();
+      all.push(record);
+      all.sort((a, b) => new Date(a.started_at) - new Date(b.started_at));
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(all));
+      localStorage.removeItem(ACTIVE_KEY);
+    }
+
+    function loadSessions() {
+      try {
+        const parsed = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
+        return Array.isArray(parsed) ? parsed : [];
+      } catch {
+        return [];
+      }
+    }
+
+    async function beginPreparation() {
+      preparationCancelled = false;
+      setPrepareMessage();
+      el.prepareTitle.textContent = "じゅんびちゅう";
+      el.prepareText.textContent = "カメラとセンサーを準備しています。";
+      showScreen("prepare");
+
+      if (!secureContextOkay()) {
+        setPrepareMessage("カメラは HTTPS または localhost で開く必要があります。\n例: このHTMLがあるフォルダで `python3 -m http.server 8000` を実行し、http://localhost:8000/ を開いてください。", "error");
+        return;
+      }
+      if (!navigator.mediaDevices?.getUserMedia) {
+        setPrepareMessage("このブラウザではカメラ機能を利用できません。", "error");
+        return;
+      }
+
+      try {
+        await Promise.all([ensureDetector(), startCamera()]);
+        if (preparationCancelled) return;
+        el.prepareTitle.textContent = "カメラをみています";
+        el.prepareText.textContent = "顔が見つかったら、記録を始めます。";
+        const found = await waitForInitialFace();
+        if (preparationCancelled) return;
+        if (!found) {
+          setPrepareMessage("顔を確認できませんでした。端末の向きや距離を調整して、もう一度試してください。", "warn");
+          return;
+        }
+        startSession();
+      } catch (error) {
+        console.error(error);
+        const name = error?.name || "";
+        const msg = name === "NotAllowedError"
+          ? "カメラの使用が許可されていません。ブラウザの設定からカメラを許可してください。"
+          : `準備に失敗しました。\n${error?.message || error}`;
+        setPrepareMessage(msg, "error");
+        stopCamera();
+      }
+    }
+
+    function startSession() {
+      session = createSession();
+      showScreen("tracking");
+      scheduleDetectionLoop();
+      checkpointActiveSession();
+      clearInterval(checkpointTimer);
+      checkpointTimer = setInterval(checkpointActiveSession, 10_000);
+    }
+
+    function finishSession() {
+      if (!session) return;
+      const endPerf = performance.now();
+      const endDate = new Date();
+
+      // 終了直前にロストがGRACEを超えている場合も遡及確定する。
+      if (session.currentState === "detected" && session.lostSince !== null && endPerf - session.lostSince >= GRACE_MS) {
+        transitionState("undetected", session.lostSince);
+        session.lostSince = null;
+      }
+
+      if (endPerf > session.currentSegmentStart) {
+        session.segments.push({ state: session.currentState, start_perf: session.currentSegmentStart, end_perf: endPerf });
+      }
+
+      const segments = session.segments;
+      const totals = calculateTotals(segments);
+      const totalDuration = Math.max(0, Math.round(endPerf - session.startedPerf));
+      const record = {
+        id: session.id,
+        version: APP_VERSION,
+        date: localDateString(new Date(session.startedAtIso)),
+        started_at: session.startedAtIso,
+        ended_at: endDate.toISOString(),
+        total_duration_ms: totalDuration,
+        ...totals,
+        sensor: session.sensor,
+        segments: serializeSegments(segments, session.startedPerf),
+      };
+
+      clearTimeout(detectionTimer);
+      clearInterval(checkpointTimer);
+      detectionTimer = null;
+      checkpointTimer = null;
+      session = null;
+      stopCamera();
+      saveFinishedSession(record);
+      renderResult(record);
+      showScreen("result");
+    }
+
+    function cancelPreparation() {
+      preparationCancelled = true;
+      stopCamera();
+      showScreen("idle");
+    }
+
+    function renderResult(record) {
+      el.resultDate.textContent = formatJapaneseDate(new Date(record.started_at));
+      el.resultTotal.textContent = formatDurationFriendly(record.total_duration_ms);
+      el.resultDetected.textContent = formatClock(record.detected_duration_ms);
+      el.resultUndetected.textContent = formatClock(record.undetected_duration_ms);
+      el.resultUnknown.textContent = formatClock(record.unknown_duration_ms || 0);
+      el.unknownRow.classList.toggle("hidden", !(record.unknown_duration_ms > 0));
+      el.resultRatio.textContent = record.detected_ratio == null ? "—" : `${(record.detected_ratio * 100).toFixed(1)}%`;
+    }
+
+    function renderHistory() {
+      const sessions = loadSessions().slice().reverse();
+      el.historyBody.innerHTML = "";
+      el.historyEmpty.classList.toggle("hidden", sessions.length > 0);
+      el.historyTableWrap.classList.toggle("hidden", sessions.length === 0);
+      el.exportCsv.disabled = sessions.length === 0;
+      el.exportJson.disabled = sessions.length === 0;
+      el.deleteAll.disabled = sessions.length === 0;
+
+      for (const s of sessions) {
+        const tr = document.createElement("tr");
+        const cells = [
+          formatDateTimeShort(new Date(s.started_at)),
+          formatClock(s.total_duration_ms),
+          formatClock(s.detected_duration_ms),
+          formatClock(s.undetected_duration_ms),
+          formatClock(s.unknown_duration_ms || 0),
+          s.detected_ratio == null ? "—" : `${(s.detected_ratio * 100).toFixed(1)}%`,
+        ];
+        cells.forEach((value, index) => {
+          const td = document.createElement("td");
+          td.textContent = value;
+          if (index === 0) td.title = s.id;
+          tr.appendChild(td);
+        });
+        el.historyBody.appendChild(tr);
+      }
+    }
+
+    function openHistory() {
+      renderHistory();
+      showScreen("history");
+    }
+
+    function exportJson() {
+      downloadBlob(JSON.stringify(loadSessions(), null, 2), `homework-tracker-${localDateString(new Date())}.json`, "application/json");
+    }
+
+    function exportCsv() {
+      const header = ["id","date","started_at","ended_at","total_duration_ms","detected_duration_ms","undetected_duration_ms","unknown_duration_ms","detected_ratio"];
+      const rows = loadSessions().map(s => header.map(k => csvEscape(s[k] ?? "")).join(","));
+      const csv = "\ufeff" + [header.join(","), ...rows].join("\r\n");
+      downloadBlob(csv, `homework-tracker-${localDateString(new Date())}.csv`, "text/csv;charset=utf-8");
+    }
+
+    function downloadBlob(content, filename, type) {
+      const blob = new Blob([content], { type });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }
+
+    function csvEscape(value) {
+      const str = String(value);
+      return /[",\r\n]/.test(str) ? `"${str.replaceAll('"', '""')}"` : str;
+    }
+
+    function beginHold(event) {
+      event.preventDefault();
+      cancelHold();
+      holdStartedAt = performance.now();
+      const animate = () => {
+        const p = Math.min(1, (performance.now() - holdStartedAt) / HOLD_TO_FINISH_MS);
+        el.finish.style.setProperty("--hold", `${p * 100}%`);
+        if (p < 1) holdAnimation = requestAnimationFrame(animate);
+      };
+      holdAnimation = requestAnimationFrame(animate);
+      holdTimer = setTimeout(() => {
+        cancelHold(false);
+        finishSession();
+      }, HOLD_TO_FINISH_MS);
+    }
+
+    function cancelHold(reset = true) {
+      clearTimeout(holdTimer);
+      cancelAnimationFrame(holdAnimation);
+      holdTimer = null;
+      holdAnimation = null;
+      if (reset) el.finish.style.setProperty("--hold", "0%");
+    }
+
+    function formatClock(ms = 0) {
+      const totalSec = Math.max(0, Math.round(ms / 1000));
+      const min = Math.floor(totalSec / 60);
+      const sec = totalSec % 60;
+      return `${min}:${String(sec).padStart(2, "0")}`;
+    }
+
+    function formatDurationFriendly(ms = 0) {
+      const sec = Math.max(0, Math.round(ms / 1000));
+      const min = Math.floor(sec / 60);
+      const rem = sec % 60;
+      if (min === 0) return `${rem}秒`;
+      if (rem === 0) return `${min}分`;
+      return `${min}分 ${rem}秒`;
+    }
+
+    function localDateString(date) {
+      const y = date.getFullYear();
+      const m = String(date.getMonth() + 1).padStart(2, "0");
+      const d = String(date.getDate()).padStart(2, "0");
+      return `${y}-${m}-${d}`;
+    }
+
+    function formatCompactDate(date) {
+      const y = date.getFullYear();
+      const m = String(date.getMonth() + 1).padStart(2, "0");
+      const d = String(date.getDate()).padStart(2, "0");
+      const hh = String(date.getHours()).padStart(2, "0");
+      const mm = String(date.getMinutes()).padStart(2, "0");
+      const ss = String(date.getSeconds()).padStart(2, "0");
+      return `${y}${m}${d}-${hh}${mm}${ss}`;
+    }
+
+    function formatJapaneseDate(date) {
+      return `${date.getFullYear()}年${date.getMonth() + 1}月${date.getDate()}日`;
+    }
+
+    function formatDateTimeShort(date) {
+      return `${date.getMonth() + 1}/${date.getDate()} ${String(date.getHours()).padStart(2,"0")}:${String(date.getMinutes()).padStart(2,"0")}`;
+    }
+
+    function randomId(length = 4) {
+      const chars = "abcdefghjkmnpqrstuvwxyz23456789";
+      const bytes = new Uint8Array(length);
+      crypto.getRandomValues(bytes);
+      return Array.from(bytes, b => chars[b % chars.length]).join("");
+    }
+
+    function checkInterruptedPreviousSession() {
+      const raw = localStorage.getItem(ACTIVE_KEY);
+      if (!raw) return;
+      try {
+        const s = JSON.parse(raw);
+        const time = s.last_checkpoint_at ? new Date(s.last_checkpoint_at) : null;
+        const label = time ? formatDateTimeShort(time) : "前回";
+        if (confirm(`${label} に途中で終了した記録があります。途中記録は完成データには追加されていません。消しますか？`)) {
+          localStorage.removeItem(ACTIVE_KEY);
+        }
+      } catch {
+        localStorage.removeItem(ACTIVE_KEY);
+      }
+    }
+
+    el.start.addEventListener("click", beginPreparation);
+    el.cancelPrepare.addEventListener("click", cancelPreparation);
+    el.history.addEventListener("click", openHistory);
+    el.resultHistory.addEventListener("click", openHistory);
+    el.closeResult.addEventListener("click", () => showScreen("idle"));
+    el.backHistory.addEventListener("click", () => showScreen("idle"));
+    el.exportJson.addEventListener("click", exportJson);
+    el.exportCsv.addEventListener("click", exportCsv);
+    el.deleteAll.addEventListener("click", () => {
+      if (confirm("保存している記録をすべて消しますか？この操作は元に戻せません。")) {
+        localStorage.removeItem(STORAGE_KEY);
+        renderHistory();
+      }
+    });
+
+    el.finish.addEventListener("pointerdown", beginHold);
+    el.finish.addEventListener("pointerup", () => cancelHold());
+    el.finish.addEventListener("pointercancel", () => cancelHold());
+    el.finish.addEventListener("pointerleave", () => cancelHold());
+    el.finish.addEventListener("contextmenu", e => e.preventDefault());
+
+    document.addEventListener("visibilitychange", () => {
+      if (!session) return;
+      const now = performance.now();
+      if (document.hidden) {
+        if (session.currentState === "detected" && session.lostSince !== null && now - session.lostSince >= GRACE_MS) {
+          transitionState("undetected", session.lostSince);
+        }
+        session.lostSince = null;
+        transitionState("unknown", now);
+      }
+    });
+
+    window.addEventListener("pagehide", checkpointActiveSession);
+    window.addEventListener("beforeunload", checkpointActiveSession);
+
+    checkInterruptedPreviousSession();
+  </script>
+</body>
+</html>
